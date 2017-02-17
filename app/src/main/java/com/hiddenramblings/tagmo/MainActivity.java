@@ -12,6 +12,8 @@ import android.net.Uri;
 import android.nfc.NfcAdapter;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Message;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AlertDialog;
@@ -32,12 +34,15 @@ import org.androidannotations.annotations.Click;
 import org.androidannotations.annotations.EActivity;
 import org.androidannotations.annotations.OptionsItem;
 import org.androidannotations.annotations.OptionsMenu;
+import org.androidannotations.annotations.TextChange;
 import org.androidannotations.annotations.UiThread;
 import org.androidannotations.annotations.ViewById;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.util.Arrays;
 import java.util.Calendar;
 
@@ -62,6 +67,8 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
     TextView txtNFC;
     @ViewById(R.id.txtTagId)
     TextView txtTagId;
+    @ViewById(R.id.txtTagFile)
+    TextView txtTagFile;
 
     @ViewById(R.id.btnSaveTag)
     Button btnSaveTag;
@@ -84,6 +91,7 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
     CheckBox cbNoIDValidate;
 
     byte[] currentTagData;
+    boolean isDirty = false;
     KeyManager keyManager;
     NfcAdapter nfcAdapter;
 
@@ -179,7 +187,7 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
         btnWriteTagAuto.setEnabled(nfcEnabled && hasKeys && hasTag);
         btnWriteTagRaw.setEnabled(nfcEnabled && hasTag);
         btnRestoreTag.setEnabled(nfcEnabled && hasTag);
-        btnSaveTag.setEnabled(nfcEnabled && hasTag);
+        btnSaveTag.setEnabled(hasTag && isDirty);
         btnEditDataSSB.setEnabled(hasKeys && hasTag);
         btnViewHex.setEnabled(hasKeys && hasTag);
 
@@ -197,11 +205,15 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
                 onTagLoaded(charIdData);
             } else {
                 txtTagId.setText("TagId: <No tag loaded>");
+                txtTagFile.setText("");
+                this.isDirty = false;
                 onTagLoaded(null);
             }
         } catch (Exception e) {
             LogError("Error parsing tag id", e);
             txtTagId.setText("TagID: <Error>");
+            txtTagFile.setText("");
+            this.isDirty = false;
             onTagLoaded(null);
         }
     }
@@ -345,9 +357,14 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
                 if (!Actions.ACTION_EDIT_COMPLETE.equals(action))
                     return;
                 this.currentTagData = data.getByteArrayExtra(Actions.EXTRA_TAG_DATA);
+                this.txtTagFile.setText("Unsaved");
+                this.isDirty = true;
+                //Enable save button
                 this.updateStatus();
                 if (this.currentTagData == null) {
                     LogError("Tag data is empty");
+                    this.txtTagFile.setText("");
+                    this.isDirty = false;
                     return;
                 }
             case NFC_ACTIVITY:
@@ -359,10 +376,16 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
                 updateStatus();
                 if (this.currentTagData == null) {
                     LogError("Tag data is empty");
+                    this.txtTagFile.setText("");
+                    this.isDirty = false;
                     return;
                 }
                 if (cbAutoSaveOnScan.isChecked())
                     writeTagToFile(this.currentTagData);
+                else {
+                    this.txtTagFile.setText("Unsaved");
+                    this.isDirty = true;
+                }
                 break;
             case FILE_LOAD_KEYS:
                 loadKey(data.getData());
@@ -413,7 +436,7 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
     }
 
     @Background
-    void loadTagFile(Uri uri) {
+    void loadTagFile(final Uri uri) {
         try {
             InputStream strm = getContentResolver().openInputStream(uri);
             byte[] data = new byte[TagUtil.TAG_FILE_SIZE];
@@ -426,6 +449,18 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
             }
             this.currentTagData = data;
             showToast("Loaded tag file.");
+            this.txtTagFile.post(new Runnable() {
+                public void run() {
+                    try {
+                        txtTagFile.setText(new File(URLDecoder.decode(uri.toString(), "UTF-8")).getName());
+                    }
+                    catch (UnsupportedEncodingException e)
+                    {
+                        LogError("Error getting filename: " + e.getMessage());
+                    }
+                }
+            });
+            this.isDirty = false;
         } catch (Exception e) {
             LogError("Error: " + e.getMessage());
         }
@@ -448,7 +483,7 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
 
             byte[] uid = Arrays.copyOfRange(tagdata, 0, 9);
             String uids = Util.bytesToHex(uid);
-            String fname = String.format("%1$s [%2$s] %3$ty%3$tm%3$te_%3$tH%3$tM%3$tS%4$s.bin", charid,  uids, Calendar.getInstance(), (valid ? "" : "_corrupted_"));
+            final String fname = String.format("%1$s [%2$s] %3$ty%3$tm%3$te_%3$tH%3$tM%3$tS%4$s.bin", charid,  uids, Calendar.getInstance(), (valid ? "" : "_corrupted_"));
 
             File dir = new File(Environment.getExternalStorageDirectory(), DATA_DIR);
             if (!dir.isDirectory())
@@ -469,8 +504,21 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
                 Log.e(TAG, "Failed to refresh media scanner", e);
             }
             LogMessage("Wrote to file " + fname + " in tagmo directory.");
+            showToast("Saved tag file.");
+            this.txtTagFile.post(new Runnable() {
+                public void run() {
+                    txtTagFile.setText(fname);
+                }
+            });
+            this.isDirty = false;
+            updateStatus();
         } catch (Exception e) {
             LogError("Error writing to file: " + e.getMessage());
+            this.txtTagFile.post(new Runnable() {
+                public void run() {
+                    txtTagFile.setText("Error saving");
+                }
+            });
         }
     }
 
