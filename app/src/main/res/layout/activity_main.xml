@@ -147,6 +147,14 @@
 
     <Button
         android:layout_height="wrap_content"
+        android:text="Merge Tag"
+        android:id="@+id/btnMergeTag"
+        android:layout_row="17"
+        android:layout_column="0"
+        android:layout_width="148dp" />
+
+    <Button
+        android:layout_height="wrap_content"
         android:text="Edit Mii Data"
         android:id="@+id/btnEditDataMii"
         android:layout_row="16"

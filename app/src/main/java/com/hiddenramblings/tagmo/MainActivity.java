@@ -46,6 +46,8 @@ import java.net.URLDecoder;
 import java.util.Arrays;
 import java.util.Calendar;
 
+import static com.hiddenramblings.tagmo.TagWriter.compareRange;
+
 
 @EActivity(R.layout.activity_main)
 @OptionsMenu({R.menu.main_menu})
@@ -58,6 +60,10 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
     private static final int FILE_LOAD_KEYS = 0x101;
     private static final int NFC_ACTIVITY = 0x102;
     private static final int EDIT_TAG = 0x103;
+    private static final int FILE_LOAD_MERGE_TAG = 0x104;
+
+    private static final byte SettingsInitialized = 1 << 4;
+    private static final byte AppDataInitialized = 1 << 5;
 
     @ViewById(R.id.txtLockedKey)
     TextView txtLockedKey;
@@ -80,6 +86,8 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
     Button btnWriteTagRaw;
     @ViewById(R.id.btnRestoreTag)
     Button btnRestoreTag;
+    @ViewById(R.id.btnMergeTag)
+    Button btnMergeTag;
     @ViewById(R.id.btnEditDataSSB)
     Button btnEditDataSSB;
     @ViewById(R.id.btnViewHex)
@@ -188,6 +196,7 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
         btnWriteTagRaw.setEnabled(nfcEnabled && hasTag);
         btnRestoreTag.setEnabled(nfcEnabled && hasTag);
         btnSaveTag.setEnabled(hasTag && isDirty);
+        btnMergeTag.setEnabled(hasTag);
         btnEditDataSSB.setEnabled(hasKeys && hasTag);
         btnViewHex.setEnabled(hasKeys && hasTag);
 
@@ -304,6 +313,15 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
         writeTagToFile(this.currentTagData);
     }
 
+    @Click(R.id.btnMergeTag)
+    void mergeTag() {
+        if (this.currentTagData == null) {
+            LogError("No tag loaded");
+            return;
+        }
+        showFileChooser("Load tag file with user/game data for merging", "*/*", FILE_LOAD_MERGE_TAG);
+    }
+
     @Click(R.id.btnEditDataSSB)
     void editSSBData() {
         if (this.currentTagData == null) {
@@ -393,6 +411,9 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
             case FILE_LOAD_TAG:
                 loadTagFile(data.getData());
                 break;
+            case FILE_LOAD_MERGE_TAG:
+                mergeTagFile(this.currentTagData, data.getData());
+                break;
         }
     }
 
@@ -461,6 +482,80 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
                 }
             });
             this.isDirty = false;
+        } catch (Exception e) {
+            LogError("Error: " + e.getMessage());
+        }
+        updateStatus();
+    }
+
+    @Background
+    void mergeTagFile(byte[] originalTagData, final Uri mergeFileUri) {
+        boolean originalValid = false;
+        try {
+            TagUtil.validateTag(originalTagData);
+            originalValid = true;
+        } catch (Exception e) {
+            LogError("Warning original tag is not valid");
+        }
+
+        try {
+            InputStream strm = getContentResolver().openInputStream(mergeFileUri);
+            byte[] mergeData = new byte[TagUtil.TAG_FILE_SIZE];
+            try {
+                int len = strm.read(mergeData);
+                if (len != TagUtil.TAG_FILE_SIZE)
+                    throw new Exception("Invalid file size. was expecting " + TagUtil.TAG_FILE_SIZE);
+            } finally {
+                strm.close();
+            }
+
+            byte[] originalCharIdData = TagUtil.charIdDataFromTag(originalTagData);
+            byte[] mergeCharIdData = TagUtil.charIdDataFromTag(mergeData);
+
+            if (!compareRange(originalCharIdData, mergeCharIdData, 0, originalCharIdData.length))
+            {
+                LogMessage("!!! WARNING !!!: Input and merge file are not the same amiibo.");
+            }
+
+            byte[] decryptedMergable = TagUtil.decrypt(keyManager, mergeData);
+
+            byte mergeFileStatus = (byte) (decryptedMergable[0x02C] & 0x30);
+            if (!Util.hasFlag(mergeFileStatus, AppDataInitialized))
+            {
+                if (!Util.hasFlag(mergeFileStatus, SettingsInitialized))
+                {
+                    throw new Exception("The merge file does not have settings data!");
+                }
+                throw new Exception("The merge file does not have app data!");
+            }
+
+            byte[] interim = TagUtil.decrypt(keyManager, originalTagData);
+
+            byte originalFileStatus = (byte) (interim[0x02C] & 0x30);
+            if (Util.hasFlag(originalFileStatus, AppDataInitialized) || Util.hasFlag(originalFileStatus, SettingsInitialized))
+            {
+                LogMessage("!!! WARNING !!!: The original file already has settings data. Overwriting...");
+            }
+            if (Util.hasFlag(originalFileStatus, AppDataInitialized))
+            {
+                LogMessage("!!! WARNING !!!: The original file already has app data. Overwriting...");
+            }
+
+            // Copy Amiibo Settings and App Data
+            showToast("Copying settings and app data...");
+            // Entirety of Cryptobuffer between two decrypted tags
+            System.arraycopy(decryptedMergable, 0x02C, interim, 0x02C, 0x188);
+
+            // Re-encrypt
+            this.currentTagData = TagUtil.encrypt(keyManager, interim);
+            showToast("Merged tag file.");
+
+            this.txtTagFile.post(new Runnable() {
+                public void run() {
+                    txtTagFile.setText("Unsaved");
+                }
+            });
+            this.isDirty = true;
         } catch (Exception e) {
             LogError("Error: " + e.getMessage());
         }

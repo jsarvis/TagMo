@@ -51,5 +51,9 @@ public class Util {
         return bytes;
     }
 
+    public static boolean hasFlag(byte value, byte flag)
+    {
+        return (value & flag) == flag;
+    }
 
 }
