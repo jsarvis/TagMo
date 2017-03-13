@@ -542,7 +542,6 @@ public class MainActivity extends AppCompatActivity /* implements TagCreateDialo
             }
 
             // Copy Amiibo Settings and App Data
-            showToast("Copying settings and app data...");
             // Entirety of Cryptobuffer between two decrypted tags
             System.arraycopy(decryptedMergable, 0x02C, interim, 0x02C, 0x188);
 
